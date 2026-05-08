@@ -1,0 +1,269 @@
+openapi: 3.0.3
+
+info:
+  title: API Book-Feed
+  version: 1.0.0
+  description: |
+    API responsável pelo feed de livros lidos da plataforma Book-Feed.
+
+    Este endpoint utiliza paginação baseada em cursor (Keyset Pagination),
+    garantindo maior performance e consistência dos dados em comparação
+    à paginação tradicional baseada em offset.
+
+    A estratégia evita problemas de "Page Drift", comuns em feeds que
+    recebem atualizações frequentes.
+
+servers:
+  - url: https://api.bookfeed.com/v1
+    description: Servidor de Produção
+
+# 
+# Estratégia para inversão de ordenação:
+#
+# Para permitir que o cliente consulte os livros do mais antigo para
+# o mais recente sem quebrar a lógica da paginação por cursor:
+#
+# 1. Seria adicionado um parâmetro de query chamado `order`
+#    aceitando os valores:
+#    - asc
+#    - desc
+#
+# 2. Quando order=desc:
+#    ORDER BY dataLeitura DESC
+#    WHERE dataLeitura < cursor
+#
+# 3. Quando order=asc:
+#    ORDER BY dataLeitura ASC
+#    WHERE dataLeitura > cursor
+#
+# 4. O cursor continuaria representando o último item recebido
+#    pelo cliente, garantindo consistência na navegação.
+#
+# 5. A estratégia também poderia utilizar UUID sequencial em vez
+#    de dataLeitura como chave de paginação.
+# 
+
+paths:
+  /usuarios/{userId}/livros-lidos:
+    get:
+      summary: Retorna o feed de livros lidos de um utilizador
+      description: |
+        Retorna uma lista paginada de livros marcados como lidos
+        por um utilizador da plataforma.
+
+        A ordenação padrão é da leitura mais recente para a mais antiga.
+
+        O endpoint utiliza paginação baseada em cursor para garantir:
+        - Alta performance em grandes volumes de dados
+        - Consistência durante navegação contínua
+        - Evitar duplicação ou perda de itens
+
+      tags:
+        - Livros Lidos
+
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID único do utilizador na plataforma.
+          schema:
+            type: integer
+            example: 13392
+
+        - name: limit
+          in: query
+          required: false
+          description: |
+            Quantidade máxima de itens retornados por página.
+
+            Valor padrão: 20  
+            Valor máximo permitido: 50
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+            example: 20
+
+        - name: after
+          in: query
+          required: false
+          description: |
+            Cursor utilizado para recuperar a próxima página.
+
+            Deve conter o UUID do último registro de leitura
+            recebido pelo cliente na página anterior.
+          schema:
+            type: string
+            format: uuid
+            example: "550e8400-e29b-41d4-a716-446655440000"
+
+      responses:
+        '200':
+          description: Lista de livros retornada com sucesso.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+              examples:
+                sucesso:
+                  summary: Exemplo de resposta paginada
+                  value:
+                    data:
+                      - id: "550e8400-e29b-41d4-a716-446655440000"
+                        dataLeitura: "2026-05-06T14:30:00Z"
+                        livro:
+                          id: "7d444840-e29b-41d4-a716-999999999999"
+                          titulo: "Clean Code"
+                          autor: "Robert C. Martin"
+
+                      - id: "660e8400-e29b-41d4-a716-447777777777"
+                        dataLeitura: "2026-05-05T19:15:00Z"
+                        livro:
+                          id: "8d444840-e29b-41d4-a716-888888888888"
+                          titulo: "Domain-Driven Design"
+                          autor: "Eric Evans"
+
+                    pagination:
+                      hasNextPage: true
+                      nextCursor: "660e8400-e29b-41d4-a716-447777777777"
+
+        '400':
+          description: |
+            Requisição inválida.
+
+            Exemplos:
+            - limit maior que 50
+            - limit menor que 1
+            - limit não numérico
+            - cursor inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                limiteInvalido:
+                  summary: Exemplo de limit inválido
+                  value:
+                    codigo: "BAD_REQUEST"
+                    mensagem: "O parâmetro 'limit' deve ser um número entre 1 e 50."
+
+        '404':
+          description: Utilizador não encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                usuarioNaoEncontrado:
+                  summary: Exemplo de utilizador inexistente
+                  value:
+                    codigo: "USER_NOT_FOUND"
+                    mensagem: "O utilizador com ID 13392 não foi encontrado."
+
+components:
+  schemas:
+
+    FeedResponse:
+      type: object
+      required:
+        - data
+        - pagination
+
+      properties:
+        data:
+          type: array
+          description: Lista de livros lidos.
+          items:
+            $ref: '#/components/schemas/LivroLido'
+
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      required:
+        - hasNextPage
+        - nextCursor
+
+      properties:
+        hasNextPage:
+          type: boolean
+          description: |
+            Indica se existe uma próxima página disponível.
+          example: true
+
+        nextCursor:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Cursor que deve ser utilizado para recuperar
+            a próxima página de resultados.
+
+            Será null quando não houver mais registros.
+          example: "660e8400-e29b-41d4-a716-447777777777"
+
+    LivroLido:
+      type: object
+      required:
+        - id
+        - dataLeitura
+        - livro
+
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID único do registro de leitura.
+          example: "550e8400-e29b-41d4-a716-446655440000"
+
+        dataLeitura:
+          type: string
+          format: date-time
+          description: Data e hora em que o livro foi marcado como lido.
+          example: "2026-05-06T14:30:00Z"
+
+        livro:
+          $ref: '#/components/schemas/Livro'
+
+    Livro:
+      type: object
+      required:
+        - id
+        - titulo
+        - autor
+
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID único do livro.
+          example: "7d444840-e29b-41d4-a716-999999999999"
+
+        titulo:
+          type: string
+          description: Título do livro.
+          example: "Clean Code"
+
+        autor:
+          type: string
+          description: Nome do autor do livro.
+          example: "Robert C. Martin"
+
+    Erro:
+      type: object
+      required:
+        - codigo
+        - mensagem
+
+      properties:
+        codigo:
+          type: string
+          description: Código identificador do erro.
+          example: "BAD_REQUEST"
+
+        mensagem:
+          type: string
+          description: Mensagem descritiva do erro.
+          example: "O parâmetro informado é inválido."
